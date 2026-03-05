@@ -1,0 +1,31 @@
+name: reader_pov_app
+description: "A new Flutter project."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  http: ^1.2.2
+
+  # ✅ 로컬 저장(영구 저장)
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+
+
