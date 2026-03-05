@@ -34,6 +34,16 @@ class _GenerateEpisodeScreenState extends State<GenerateEpisodeScreen> {
           1);
 
   Future<void> _generate() async {
+    // 연타/중복 호출 방지 guard
+    if (_isGenerating) {
+      debugPrint('[GenerateEpisodeScreen] onPressed 중복 진입 차단 (isGenerating=true)');
+      return;
+    }
+
+    final ts = DateTime.now().toIso8601String();
+    debugPrint('[GenerateEpisodeScreen] onPressed 진입 '
+        'projectId=${widget.project.id} number=$_nextNumber ts=$ts');
+
     setState(() => _isGenerating = true);
 
     final userRequest =

@@ -333,6 +333,15 @@ class StoryProject {
       }
     }
 
+    // number 기준 중복 제거 후 정렬 (저장 데이터에 중복이 있어도 안전하게 로드)
+    final dedupedEps = <int, Episode>{};
+    for (final e in eps) {
+      dedupedEps[e.number] = e;
+    }
+    eps
+      ..clear()
+      ..addAll(dedupedEps.values.toList()..sort((a, b) => a.number.compareTo(b.number)));
+
     String protagonist = (json['protagonistName'] ?? '').toString().trim();
 
     // ✅ 하위호환 강화: protagonistName이 비어있으면,

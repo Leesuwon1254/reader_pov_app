@@ -38,11 +38,19 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       ),
     ).then((created) async {
       if (created is Episode) {
-        setState(() => project.episodes.add(created));
+        setState(() {
+          // upsert: ApiService가 이미 리스트에 추가했을 수 있으므로
+          // 같은 number가 있으면 교체, 없으면 추가
+          final idx = project.episodes.indexWhere((e) => e.number == created.number);
+          if (idx >= 0) {
+            project.episodes[idx] = created;
+          } else {
+            project.episodes.add(created);
+            project.episodes.sort((a, b) => a.number.compareTo(b.number));
+          }
+        });
 
-        // ✅ 여기서 바로 저장 (앱 재시작해도 2화/3화 유지)
         await StorageService.save();
-
         _openEpisode(created);
       }
     });

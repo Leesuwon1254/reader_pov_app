@@ -273,8 +273,10 @@ $userRequest
     final resolvedUrl = await _resolvedBaseUrl();
     final uri = Uri.parse('$resolvedUrl/generate');
 
-    debugPrint('[ApiService] generateEpisode 시작');
-    debugPrint('[ApiService]  number=$number tone=${tone.apiKey} lengthHint=$lengthHint');
+    debugPrint('[ApiService] generateEpisode 진입: '
+        'projectId=${project.id} number=$number '
+        'ts=${DateTime.now().toIso8601String()}');
+    debugPrint('[ApiService]  tone=${tone.apiKey} lengthHint=$lengthHint');
     debugPrint('[ApiService]  userRequest="${userRequest.length > 80 ? userRequest.substring(0, 80) : userRequest}"');
     debugPrint('[ApiService]  scenarioInput="${scenarioInput.length > 80 ? scenarioInput.substring(0, 80) : scenarioInput}"');
     debugPrint('[ApiService]  endpoint=$uri');

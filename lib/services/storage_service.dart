@@ -1,6 +1,7 @@
 // lib/services/storage_service.dart
 
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
@@ -50,6 +51,24 @@ class StorageService {
   }
 
   static Future<void> upsertProject(StoryProject p) async {
+    // 저장 전 에피소드 number 기준 중복 제거 (마지막 것 유지)
+    final deduped = <int, Episode>{};
+    for (final e in p.episodes) {
+      deduped[e.number] = e;
+    }
+    if (deduped.length != p.episodes.length) {
+      debugPrint('[StorageService] upsertProject: 에피소드 중복 제거 '
+          '${p.episodes.length}개 → ${deduped.length}개 (projectId=${p.id})');
+    }
+    p.episodes
+      ..clear()
+      ..addAll(deduped.values.toList()..sort((a, b) => a.number.compareTo(b.number)));
+
+    debugPrint('[StorageService] upsertProject 직전: '
+        'projectId=${p.id} episodeCount=${p.episodes.length} '
+        'numbers=${p.episodes.map((e) => e.number).toList()} '
+        'ts=${DateTime.now().toIso8601String()}');
+
     final idx = projects.indexWhere((x) => x.id == p.id);
     if (idx >= 0) {
       projects[idx] = p;
