@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
@@ -57,8 +58,13 @@ class _GenerateEpisodeScreenState extends State<GenerateEpisodeScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isGenerating = false);
+      debugPrint('[GenerateEpisodeScreen] 생성 실패: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('생성 실패: $e')),
+        SnackBar(
+          content: Text('생성 실패: $e'),
+          duration: const Duration(seconds: 8),
+          action: SnackBarAction(label: '닫기', onPressed: () {}),
+        ),
       );
     }
   }

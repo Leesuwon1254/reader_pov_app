@@ -1,6 +1,7 @@
 // lib/services/api_service.dart
 
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
@@ -76,6 +77,18 @@ class ApiService {
   }
 
   static int _charCount(String s) => s.replaceAll('\r\n', '\n').length;
+
+  // OpenAI 거절 메시지 감지 (짧고 "처리할 수 없" 류 문구 포함)
+  static bool _isRefusalContent(String content) {
+    final t = content.trim();
+    if (t.length > 300) return false; // 충분히 긴 본문은 거절 아님
+    return t.contains('처리할 수 없') ||
+        t.contains('죄송합니다') ||
+        t.contains('요청을 처리') ||
+        t.contains('I\'m sorry') ||
+        t.contains('I cannot') ||
+        t.contains('unable to');
+  }
 
   static bool _isTooShort(String content, int targetChars) {
     final n = _charCount(content.trim());
@@ -257,10 +270,17 @@ $userRequest
 요청을 반영해 다음 화를 소설 본문으로 작성해줘.
 ''';
 
-    final uri = Uri.parse('${await _resolvedBaseUrl()}/generate');
+    final resolvedUrl = await _resolvedBaseUrl();
+    final uri = Uri.parse('$resolvedUrl/generate');
+
+    debugPrint('[ApiService] generateEpisode 시작');
+    debugPrint('[ApiService]  number=$number tone=${tone.apiKey} lengthHint=$lengthHint');
+    debugPrint('[ApiService]  userRequest="${userRequest.length > 80 ? userRequest.substring(0, 80) : userRequest}"');
+    debugPrint('[ApiService]  scenarioInput="${scenarioInput.length > 80 ? scenarioInput.substring(0, 80) : scenarioInput}"');
+    debugPrint('[ApiService]  endpoint=$uri');
 
     const int maxAttempts = 3;
-    String lastTitle = '다음 화';
+    String lastTitle = '${number}화';
     String lastContent = '';
     String usedPromptForThisEpisode = basePrompt;
 
@@ -272,6 +292,8 @@ $userRequest
         final needLengthFix = _isTooShort(lastContent, lengthHint);
 
         if (!needNoPronounFix && !needLengthFix) break;
+
+        debugPrint('[ApiService]  attempt=$attempt needPronounFix=$needNoPronounFix needLengthFix=$needLengthFix → 재시도');
 
         prompt = [
           basePrompt,
@@ -298,34 +320,64 @@ $userRequest
         'mode': tone.apiKey,
       };
 
-      final res = await http
-          .post(
-            uri,
-            headers: const {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 90));
+      debugPrint('[ApiService]  HTTP POST 시도 attempt=$attempt ...');
+
+      late http.Response res;
+      try {
+        res = await http
+            .post(
+              uri,
+              headers: const {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 90));
+      } catch (e) {
+        debugPrint('[ApiService]  HTTP 요청 실패: $e');
+        rethrow;
+      }
+
+      debugPrint('[ApiService]  응답 statusCode=${res.statusCode}');
+      debugPrint('[ApiService]  응답 body(앞 300자)=${res.body.length > 300 ? res.body.substring(0, 300) : res.body}');
 
       if (res.statusCode != 200) {
         throw 'HTTP ${res.statusCode}: ${res.body}';
       }
 
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      late Map<String, dynamic> data;
+      try {
+        data = jsonDecode(res.body) as Map<String, dynamic>;
+      } catch (e) {
+        debugPrint('[ApiService]  JSON decode 실패: $e');
+        throw 'JSON 파싱 오류: $e\nbody=${res.body.length > 200 ? res.body.substring(0, 200) : res.body}';
+      }
 
-      lastTitle = (data['title'] ?? lastTitle).toString();
+      debugPrint('[ApiService]  응답 필드=${data.keys.toList()}');
+
+      // 백엔드는 title 필드를 반환하지 않음 → number화로 고정
       lastContent = (data['content'] ?? '').toString();
 
+      debugPrint('[ApiService]  content 길이=${lastContent.length} (목표=${(lengthHint * 0.9).floor()}자 이상)');
+
       if (lastContent.trim().isEmpty) {
-        throw '서버 응답 content가 비어있음';
+        throw '서버 응답 content가 비어있음 (백엔드 로그 확인 필요)';
+      }
+
+      // OpenAI 거절 메시지 감지
+      if (_isRefusalContent(lastContent)) {
+        debugPrint('[ApiService]  OpenAI 거절 메시지 감지: "${lastContent.substring(0, lastContent.length.clamp(0, 80))}"');
+        throw 'OpenAI가 이 요청을 거절했습니다. 프롬프트 내용을 확인해주세요.\n원문: $lastContent';
       }
 
       final hasForbidden = _hasForbiddenInNarration(lastContent);
       final tooShort = _isTooShort(lastContent, lengthHint);
 
+      debugPrint('[ApiService]  hasForbidden=$hasForbidden tooShort=$tooShort');
+
       if (!hasForbidden && !tooShort) {
+        debugPrint('[ApiService]  품질 검증 통과 (attempt=$attempt)');
         break;
       }
     }
