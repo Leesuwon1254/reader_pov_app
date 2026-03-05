@@ -21,7 +21,7 @@ enum ApiMode { promptOnly, openAI }
 class ApiService {
   static const ApiMode mode = ApiMode.promptOnly;
 
-  static const String _localBaseUrl = 'http://127.0.0.1:8000';
+  static const String _localBaseUrl = 'http://127.0.0.1:8001';
   static const String _lanBaseUrl = 'http://192.168.219.94:8000';
   static const bool useLan = false;
 
