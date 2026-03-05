@@ -5,12 +5,16 @@ import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
 import '../services/storage_service.dart';
+import '../services/api_config.dart';
 
 import '../narrative/prompt_builder.dart';
 import '../narrative/narrative_state.dart';
 import '../narrative/reader_intent.dart';
 import '../narrative/auto_recall_builder.dart';
 import '../narrative/recall_pack.dart';
+import '../narrative/card_extractor.dart';
+import '../narrative/narrative_db.dart';
+import '../narrative/cards.dart';
 
 enum ApiMode { promptOnly, openAI }
 
@@ -22,6 +26,12 @@ class ApiService {
   static const bool useLan = false;
 
   static String get baseUrl => useLan ? _lanBaseUrl : _localBaseUrl;
+
+  static Future<String> _resolvedBaseUrl() async {
+    final saved = await ApiConfig.getBaseUrl();
+    if (saved != null && saved.isNotEmpty) return saved;
+    return baseUrl;
+  }
 
   static const List<String> _forbiddenNarrationTokens = [
     '너',
@@ -108,7 +118,7 @@ class ApiService {
     required String protagonistName,
     required String storyText,
   }) async {
-    final uri = Uri.parse('${baseUrl}/generate');
+    final uri = Uri.parse('${await _resolvedBaseUrl()}/generate');
 
     final prompt = [
       '너는 장편 연재소설의 “누적 메모리(Story Memory)”를 만드는 편집자다.',
@@ -200,6 +210,11 @@ class ApiService {
       scenarioInput: scenarioInput,
     );
 
+    final List<CardBase> newCards = CardExtractor.extract(
+      scenarioInput: scenarioInput,
+      nextEpisodeNo: number,
+    );
+
     final RecallPack recall = await AutoRecallBuilder.build(
       projectId: project.id,
       project: project,
@@ -207,6 +222,7 @@ class ApiService {
       intent: intent,
       maxCards: 8,
       maxFragments: 2,
+      extraCards: newCards,
     );
 
     // ✅ (NEW) 누적 메모리 30줄 로드 → PromptBuilder로 전달
@@ -241,7 +257,7 @@ $userRequest
 요청을 반영해 다음 화를 소설 본문으로 작성해줘.
 ''';
 
-    final uri = Uri.parse('${baseUrl}/generate');
+    final uri = Uri.parse('${await _resolvedBaseUrl()}/generate');
 
     const int maxAttempts = 3;
     String lastTitle = '다음 화';
@@ -346,6 +362,11 @@ $userRequest
 
     // ✅ 프로젝트 먼저 저장
     await StorageService.upsertProject(project);
+
+    // ✅ 시나리오에서 추출한 카드 DB 반영
+    for (final card in newCards) {
+      await NarrativeDB.upsertCard(project.id, card);
+    }
 
     // ============================================================
     // ✅ (NEW) 누적 메모리 10줄 생성 → 30줄로 누적 저장
