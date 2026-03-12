@@ -22,21 +22,24 @@ enum ApiMode { promptOnly, openAI }
 class ApiService {
   static const ApiMode mode = ApiMode.promptOnly;
 
-  static const String _localBaseUrl = 'http://127.0.0.1:8001';
+  static const String _localBaseUrl = 'http://127.0.0.1:8003';
   static const String _lanBaseUrl = 'http://192.168.219.94:8000';
   static const bool useLan = false;
 
   static String get baseUrl => useLan ? _lanBaseUrl : _localBaseUrl;
 
   static Future<String> _resolvedBaseUrl() async {
-    final saved = await ApiConfig.getBaseUrl();
-    if (saved != null && saved.isNotEmpty) return saved;
+    // useLan=true일 때만 저장된 URL 사용; 로컬 모드에서는 _localBaseUrl 고정
+    if (useLan) {
+      final saved = await ApiConfig.getBaseUrl();
+      if (saved != null && saved.isNotEmpty) return saved;
+    }
     return baseUrl;
   }
 
   static const List<String> _forbiddenNarrationTokens = [
     '너',
-    '네',
+    // '네' 제거: 한국어 "네"(yes/긍정)가 서술에 자연히 나와 false positive 다발
     '너의',
     '너에게',
     '너는',
@@ -52,11 +55,18 @@ class ApiService {
   static String _stripQuotedDialogue(String text) {
     final sb = StringBuffer();
     bool inQuote = false;
+    // 직선 및 한국어 곡선 따옴표 모두 처리
+    const openQuotes = {'"', '\u201C', '\u2018'};  // " " '
+    const closeQuotes = {'"', '\u201D', '\u2019'}; // " " '
 
     for (int i = 0; i < text.length; i++) {
       final ch = text[i];
-      if (ch == '"') {
-        inQuote = !inQuote;
+      if (openQuotes.contains(ch)) {
+        inQuote = true;
+        continue;
+      }
+      if (closeQuotes.contains(ch)) {
+        inQuote = false;
         continue;
       }
       if (!inQuote) sb.write(ch);
@@ -90,10 +100,6 @@ class ApiService {
         t.contains('unable to');
   }
 
-  static bool _isTooShort(String content, int targetChars) {
-    final n = _charCount(content.trim());
-    return n < (targetChars * 0.9).floor();
-  }
 
   static String _postFixInstruction({
     required int targetChars,
@@ -176,7 +182,7 @@ class ApiService {
           },
           body: jsonEncode(payload),
         )
-        .timeout(const Duration(seconds: 60));
+        .timeout(const Duration(seconds: 300));
 
     if (res.statusCode != 200) {
       throw '메모리 요약 생성 실패 HTTP ${res.statusCode}: ${res.body}';
@@ -291,11 +297,10 @@ $userRequest
 
       if (attempt > 1 && lastContent.isNotEmpty) {
         final needNoPronounFix = _hasForbiddenInNarration(lastContent);
-        final needLengthFix = _isTooShort(lastContent, lengthHint);
 
-        if (!needNoPronounFix && !needLengthFix) break;
+        if (!needNoPronounFix) break;
 
-        debugPrint('[ApiService]  attempt=$attempt needPronounFix=$needNoPronounFix needLengthFix=$needLengthFix → 재시도');
+        debugPrint('[ApiService]  attempt=$attempt needPronounFix=$needNoPronounFix → 재시도');
 
         prompt = [
           basePrompt,
@@ -303,7 +308,7 @@ $userRequest
           _postFixInstruction(
             targetChars: lengthHint,
             needNoPronounFix: needNoPronounFix,
-            needLengthFix: needLengthFix,
+            needLengthFix: false,
           ),
         ].join('\n');
       }
@@ -325,6 +330,7 @@ $userRequest
       debugPrint('[ApiService]  HTTP POST 시도 attempt=$attempt ...');
 
       late http.Response res;
+      final httpStart = DateTime.now();
       try {
         res = await http
             .post(
@@ -335,11 +341,13 @@ $userRequest
               },
               body: jsonEncode(payload),
             )
-            .timeout(const Duration(seconds: 90));
+            .timeout(const Duration(seconds: 360));
       } catch (e) {
         debugPrint('[ApiService]  HTTP 요청 실패: $e');
         rethrow;
       }
+      final httpMs = DateTime.now().difference(httpStart).inMilliseconds;
+      debugPrint('[ApiService]  HTTP 소요: ${(httpMs / 1000).toStringAsFixed(1)}s (attempt=$attempt)');
 
       debugPrint('[ApiService]  응답 statusCode=${res.statusCode}');
       debugPrint('[ApiService]  응답 body(앞 300자)=${res.body.length > 300 ? res.body.substring(0, 300) : res.body}');
@@ -374,11 +382,10 @@ $userRequest
       }
 
       final hasForbidden = _hasForbiddenInNarration(lastContent);
-      final tooShort = _isTooShort(lastContent, lengthHint);
 
-      debugPrint('[ApiService]  hasForbidden=$hasForbidden tooShort=$tooShort');
+      debugPrint('[ApiService]  hasForbidden=$hasForbidden');
 
-      if (!hasForbidden && !tooShort) {
+      if (!hasForbidden) {
         debugPrint('[ApiService]  품질 검증 통과 (attempt=$attempt)');
         break;
       }
@@ -471,7 +478,6 @@ $userRequest
         expandCast = true;
         break;
       case Tone.normal:
-      default:
         break;
     }
 

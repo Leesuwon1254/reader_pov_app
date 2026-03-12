@@ -6,6 +6,7 @@ class FakeRepo {
       id: 'p1',
       title: '승자와 패자',
       logline: '금수저 vs 노력파, 그리고 권력의 균열',
+      protagonistName: '정수',
       baseScenario:
           '신용호는 금수저로 탄탄한 배경을 바탕으로 승승장구한다. 정수는 더 치열하게 노력해 더 좋은 대학을 가고, 그의 자식이 검사가 되어 신용호의 불법 요소를 파고든다.',
       episodes: [

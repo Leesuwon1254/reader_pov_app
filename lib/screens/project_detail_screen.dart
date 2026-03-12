@@ -22,8 +22,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => EpisodeViewerScreen(
-          // ✅ nullable-safe: title이 null이어도 화면이 죽지 않도록 기본값 제공
-          projectTitle: project.title ?? 'Reader POV',
+          projectTitle: project.title,
           episode: ep,
         ),
       ),
@@ -62,7 +61,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(project.title ?? 'Reader POV'),
+        title: Text(project.title),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _createNextEpisode,
@@ -124,14 +123,14 @@ class _ProjectInfoCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(project.logline ?? '', style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(project.logline, style: const TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 10),
           const Text(
             '기본 시나리오(뼈대)',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
-          Text(project.baseScenario ?? '', style: const TextStyle(height: 1.3)),
+          Text(project.baseScenario, style: const TextStyle(height: 1.3)),
         ],
       ),
     );

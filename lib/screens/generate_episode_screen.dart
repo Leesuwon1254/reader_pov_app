@@ -1,9 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
-import '../widgets/ad_popup_content.dart';
+import '../widgets/generating_dialog.dart';
 
 class GenerateEpisodeScreen extends StatefulWidget {
   final StoryProject project;
@@ -48,8 +47,8 @@ class _GenerateEpisodeScreenState extends State<GenerateEpisodeScreen> {
       barrierDismissible: false,
       barrierColor: Colors.black54,
       builder: (_) => PopScope(
-        canPop: false, // 뒤로가기/제스처로 닫기 방지
-        child: _AdLoadingDialog(allowSkip: _allowAdSkip),
+        canPop: false,
+        child: GeneratingDialog(allowSkip: _allowAdSkip),
       ),
     );
   }
@@ -174,79 +173,6 @@ class _GenerateEpisodeScreenState extends State<GenerateEpisodeScreen> {
             label: Text(_isGenerating ? '생성 중...' : '생성하기'),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ── 광고 로딩 다이얼로그 ─────────────────────────────────────
-class _AdLoadingDialog extends StatelessWidget {
-  final bool allowSkip;
-
-  const _AdLoadingDialog({this.allowSkip = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Dialog(
-      backgroundColor: cs.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(0, 24, 0, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 헤더: 로딩 표시
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: cs.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    '소설 생성 중...',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
-                      color: cs.onSurface,
-                    ),
-                  ),
-                  // 스킵 버튼 (allowSkip == true일 때만 표시)
-                  if (allowSkip) ...[
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 20),
-                      tooltip: '스킵',
-                      onPressed: () {
-                        // 스킵은 UI만 닫힘 — 생성은 계속 진행됨
-                        Navigator.of(context).pop();
-                      },
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '잠시만 기다려 주세요',
-              style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-
-            // 광고 콘텐츠 (AdPopupContent 교체로 AdMob 연결 가능)
-            const AdPopupContent(),
-          ],
-        ),
       ),
     );
   }

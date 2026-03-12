@@ -66,7 +66,7 @@ class TemplateSelectScreen extends StatelessWidget {
                               ),
                             );
 
-                            if (result is StoryProject) {
+                            if (result is StoryProject && context.mounted) {
                               Navigator.pop(context, result);
                             }
                           },

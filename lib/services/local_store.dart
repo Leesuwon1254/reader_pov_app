@@ -104,6 +104,7 @@ extension StoryProjectFromMap on Map<String, dynamic> {
       title: (this['title'] ?? '').toString(),
       logline: (this['logline'] ?? '').toString(),
       baseScenario: (this['baseScenario'] ?? '').toString(),
+      protagonistName: (this['protagonistName'] ?? '').toString(),
       episodes: eps,
     );
   }

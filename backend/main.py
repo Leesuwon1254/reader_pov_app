@@ -29,7 +29,7 @@ def _get_openai_client() -> OpenAI:
             status_code=500,
             detail="OPENAI_API_KEY not set. Check backend/.env (no quotes, no extra spaces), and restart uvicorn."
         )
-    return OpenAI(api_key=api_key)
+    return OpenAI(api_key=api_key, timeout=300.0)
 
 # -------------------------------------------------------
 # 1) ENUM / Models
@@ -52,7 +52,7 @@ class FlutterGenerateRequest(BaseModel):
     synopsis: Optional[str] = ""
     genre: Optional[str] = "drama"
     tone: Optional[str] = "normal"
-    length_hint: Optional[int] = 3000
+    length_hint: Optional[int] = 5000
 
     request: Optional[str] = ""
     guide: Optional[str] = ""
@@ -62,7 +62,7 @@ class FlutterGenerateRequest(BaseModel):
 class GenerateRequest(BaseModel):
     project_title: str
     genre_tone: str
-    target_length: int = 3000
+    target_length: int = 5000
 
     banned_elements: Optional[str] = None
     keywords: Optional[str] = None
@@ -272,7 +272,7 @@ def map_flutter_to_options(req: FlutterGenerateRequest) -> List[str]:
 # 서술에서 금지할 토큰(무인칭)
 _FORBIDDEN_NARRATION_TOKENS: List[re.Pattern] = [
     re.compile(r"\b너\b"),
-    re.compile(r"\b네\b"),
+    # \b네\b 제거: 한국어에서 "네"(yes/긍정)가 서술에 자연히 나와 false positive 다발
     re.compile(r"\b너의\b"),
     re.compile(r"\b너에게\b"),
     re.compile(r"\b너는\b"),
@@ -355,7 +355,7 @@ def _call_openai_text(client: OpenAI, model: str, input_text: str) -> str:
         messages=[
             {"role": "system", "content": input_text},
         ],
-        max_tokens=6000,
+        max_tokens=10000,
         temperature=0.85,
     )
     story_text = (resp.choices[0].message.content or "").strip()
@@ -407,7 +407,161 @@ def _generate_with_guard(
     return (last_text or fixed), max_attempts, did_regenerate, did_any_safe_fix, last_reason, used_input_prompt
 
 # -------------------------------------------------------
-# 5) FastAPI app
+# 5) 분할 생성 (Continuation)
+# -------------------------------------------------------
+
+def _call_openai_continuation(
+    client: OpenAI,
+    model: str,
+    base_prompt: str,
+    current_text: str,
+    remaining_chars: int,
+) -> str:
+    """
+    기존 생성 텍스트에 이어서 continuation 생성.
+    원본 프롬프트 + 지금까지의 본문 + 이어쓰기 지시를 단일 system 메시지로 구성해
+    모델이 '완결된 이야기'로 인식하는 것을 방지한다.
+    """
+    # 직전 맥락은 마지막 600자만 사용
+    tail = current_text[-600:] if len(current_text) > 600 else current_text
+
+    # base_prompt 전체 재전송 제거 → 핵심 3줄 요약만 전송 (입력 토큰 대폭 감소)
+    continuation_prompt = (
+        f"[이어쓰기 지시] 한국어 웹소설 본문을 아래 규칙으로 계속 작성하라.\n"
+        f"- 무인칭 몰입 POV. 서술에 2인칭(너/네/너의/너에게/너는) 절대 사용 금지.\n"
+        f"- 반드시 {remaining_chars}자 이상 작성할 것. 마무리/결말 금지, 계속 전개하라.\n\n"
+        f"[직전 본문 끝부분]\n"
+        f"{tail}\n\n"
+        f"[이어서 작성 시작]"
+    )
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": continuation_prompt}],
+        max_tokens=10000,
+        temperature=0.85,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    if not text:
+        raise RuntimeError("Empty content from OpenAI continuation.")
+    return text
+
+
+def _generate_with_continuation(
+    client: OpenAI,
+    model: str,
+    base_prompt: str,
+    target_chars: int,
+    max_continuations: int = 2,
+    max_guard_attempts: int = 3,
+) -> Tuple[str, int, bool, bool, Optional[str], str]:
+    """
+    1차 생성 후 분량(target_chars * 0.8) 미달 시 자동 이어쓰기.
+    Guard(금지어 체크)는 최종 합본에만 적용.
+
+    returns:
+      content, total_calls, did_regenerate, did_safe_fix, last_reason, used_input_prompt
+    """
+    import time as _time
+    t_total = _time.perf_counter()
+
+    threshold = int(target_chars * 0.8)
+    parts: List[str] = []
+    did_any_safe_fix = False
+    continuation_count = 0
+
+    # ── 1차 생성 ──────────────────────────────────────────
+    t0 = _time.perf_counter()
+    raw = _call_openai_text(client, model, base_prompt)
+    t1 = _time.perf_counter()
+    fixed, sf = _remove_safe_meta_lines(raw)
+    did_any_safe_fix = did_any_safe_fix or sf
+    parts.append(fixed)
+    print(f"[TIMING] 1차 OpenAI 호출: {t1-t0:.1f}s | 생성 분량: {len(fixed)}자 | 임계값: {threshold}자", flush=True)
+
+    # ── 이어쓰기 (최대 max_continuations회) ──────────────
+    while len("".join(parts)) < threshold and continuation_count < max_continuations:
+        current_text = "\n\n".join(parts)
+        remaining = target_chars - len(current_text)
+        print(f"[TIMING] 이어쓰기 {continuation_count+1}차 시작 (현재 {len(current_text)}자, 부족 {remaining}자)", flush=True)
+        tc0 = _time.perf_counter()
+        cont_raw = _call_openai_continuation(
+            client=client,
+            model=model,
+            base_prompt=base_prompt,
+            current_text=current_text,
+            remaining_chars=remaining,
+        )
+        tc1 = _time.perf_counter()
+        cont_fixed, sf2 = _remove_safe_meta_lines(cont_raw)
+        did_any_safe_fix = did_any_safe_fix or sf2
+        parts.append(cont_fixed)
+        continuation_count += 1
+        print(f"[TIMING] 이어쓰기 {continuation_count}차 완료: {tc1-tc0:.1f}s | 추가 분량: {len(cont_fixed)}자", flush=True)
+
+    merged = "\n\n".join(parts)
+    total_calls = 1 + continuation_count
+    print(f"[TIMING] 합본 분량: {len(merged)}자 (총 {total_calls}회 호출)", flush=True)
+
+    # ── Guard: 최종 합본에만 적용 ──────────────────────────
+    tg0 = _time.perf_counter()
+    ok, reason = _guard_validate(merged)
+    tg1 = _time.perf_counter()
+    print(f"[TIMING] Guard 체크: {(tg1-tg0)*1000:.1f}ms | ok={ok} reason={reason}", flush=True)
+    if ok:
+        print(f"[TIMING] 전체 총 소요: {_time.perf_counter()-t_total:.1f}s", flush=True)
+        return merged, total_calls, False, did_any_safe_fix, None, base_prompt
+
+    # 금지어 위반 → guard suffix 붙여서 재생성 + continuation 유지
+    guard_prompt = base_prompt + _guard_suffix_instruction()
+    last_reason: Optional[str] = reason
+    last_merged = merged
+
+    for regen_i in range(max_guard_attempts):
+        # 1차 재생성
+        print(f"[TIMING] Guard 재생성 {regen_i+1}차 시작", flush=True)
+        tr0 = _time.perf_counter()
+        raw2 = _call_openai_text(client, model, guard_prompt)
+        tr1 = _time.perf_counter()
+        fixed2, sf3 = _remove_safe_meta_lines(raw2)
+        did_any_safe_fix = did_any_safe_fix or sf3
+        total_calls += 1
+        print(f"[TIMING] Guard 재생성 {regen_i+1}차: {tr1-tr0:.1f}s | {len(fixed2)}자", flush=True)
+
+        # 분량 부족하면 continuation도 적용
+        guard_parts = [fixed2]
+        cont_count = 0
+        while len("".join(guard_parts)) < threshold and cont_count < max_continuations:
+            current_g = "\n\n".join(guard_parts)
+            remaining_g = target_chars - len(current_g)
+            tc0 = _time.perf_counter()
+            cont_g = _call_openai_continuation(
+                client=client, model=model,
+                base_prompt=guard_prompt,
+                current_text=current_g,
+                remaining_chars=remaining_g,
+            )
+            tc1 = _time.perf_counter()
+            cont_g_fixed, sf4 = _remove_safe_meta_lines(cont_g)
+            did_any_safe_fix = did_any_safe_fix or sf4
+            guard_parts.append(cont_g_fixed)
+            total_calls += 1
+            cont_count += 1
+            print(f"[TIMING] Guard 이어쓰기 {cont_count}차: {tc1-tc0:.1f}s | {len(cont_g_fixed)}자", flush=True)
+
+        merged2 = "\n\n".join(guard_parts)
+        ok2, reason2 = _guard_validate(merged2)
+        if ok2:
+            print(f"[TIMING] 전체 총 소요: {_time.perf_counter()-t_total:.1f}s", flush=True)
+            return merged2, total_calls, True, did_any_safe_fix, None, guard_prompt
+        last_reason = reason2
+        last_merged = merged2
+
+    print(f"[TIMING] 전체 총 소요(Guard 실패): {_time.perf_counter()-t_total:.1f}s", flush=True)
+    return last_merged, total_calls, True, did_any_safe_fix, last_reason, guard_prompt
+
+
+# -------------------------------------------------------
+# 6) FastAPI app
 # -------------------------------------------------------
 app = FastAPI(title="Reader POV Backend v2.3 (Prompt-first + Guard, NO-PRONOUN)")
 
@@ -428,13 +582,13 @@ def health():
 
 def _clamp_length_hint(v: Optional[int]) -> int:
     try:
-        n = int(v) if v is not None else 3000
+        n = int(v) if v is not None else 5000
     except Exception:
-        n = 3000
+        n = 5000
     if n < 3000:
         return 3000
-    if n > 7000:
-        return 7000
+    if n > 10000:
+        return 10000
     return n
 
 # -------------------------------------------------------
@@ -461,18 +615,19 @@ def generate(req: FlutterGenerateRequest):
     # ---------------------------------------------------
     if final_prompt:
         try:
-            story_text, attempts_used, did_regen, did_safe_fix, last_reason, used_input = _generate_with_guard(
+            story_text, total_calls, did_regen, did_safe_fix, last_reason, used_input = _generate_with_continuation(
                 client=client,
                 model=model,
                 base_prompt=final_prompt,
-                max_attempts=3,
+                target_chars=target_length,
+                max_continuations=2,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"OpenAI request failed: {e}")
 
         return GenerateResponse(
             content=story_text,
-            prompt_text=final_prompt,   # 사용자가 보낸 원본 prompt는 그대로 반환
+            prompt_text=final_prompt,
             style_options_block="",
             normalized={
                 "mode": "PROMPT_ONLY",
@@ -486,7 +641,7 @@ def generate(req: FlutterGenerateRequest):
                 "target_length": target_length,
                 "mapped_options": options,
                 "guard": {
-                    "attempts_used": attempts_used,
+                    "total_calls": total_calls,
                     "did_regenerate": did_regen,
                     "did_safe_fix": did_safe_fix,
                     "last_reason": last_reason,
@@ -522,11 +677,12 @@ def generate(req: FlutterGenerateRequest):
     prompt_text = result["prompt_text"]
 
     try:
-        story_text, attempts_used, did_regen, did_safe_fix, last_reason, used_input = _generate_with_guard(
+        story_text, total_calls, did_regen, did_safe_fix, last_reason, used_input = _generate_with_continuation(
             client=client,
             model=model,
             base_prompt=prompt_text,
-            max_attempts=3,
+            target_chars=target_length,
+            max_continuations=2,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI request failed: {e}")
@@ -542,7 +698,7 @@ def generate(req: FlutterGenerateRequest):
             "target_length": target_length,
             "model": model,
             "guard": {
-                "attempts_used": attempts_used,
+                "total_calls": total_calls,
                 "did_regenerate": did_regen,
                 "did_safe_fix": did_safe_fix,
                 "last_reason": last_reason,

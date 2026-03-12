@@ -1,19 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
-import '../services/storage_service.dart';
-
-import '../narrative/reader_intent.dart';
-import '../narrative/narrative_state.dart';
-import '../narrative/prompt_builder.dart';
-
-// ✅ 카드 자동 Recall 생성기
-import '../narrative/auto_recall_builder.dart';
-
-// ✅ 카드 자동 축적(시나리오에서 장소/인물/떡밥)
-import '../narrative/narrative_db.dart';
-import '../narrative/card_extractor.dart';
-import '../narrative/cards.dart';
+import '../services/api_service.dart';
+import '../widgets/generating_dialog.dart';
 
 class StartEpisodeScreen extends StatefulWidget {
   final StoryTemplate template;
@@ -76,84 +65,56 @@ class _StartEpisodeScreenState extends State<StartEpisodeScreen> {
       protagonistName: protagonistName,
     );
 
+    // Navigator를 async gap 이전에 캡처
+    final nav = Navigator.of(context);
+    bool dialogOpen = false;
+
+    // 광고 + 단계 메시지 다이얼로그 표시
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black54,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: GeneratingDialog(),
+      ),
+    );
+    dialogOpen = true;
+
     try {
-      const nextNumber = 1;
-
-      // 1) 독자 의도(규칙 기반 파싱)
-      final intent = ReaderIntent.fromUserText(userRequest);
-
-      // 2) 프로젝트별 상태 로드 (1화니까 defaultEpisodeNo: 0)
-      final state = await StorageService.loadState(
-        newProject.id,
-        defaultEpisodeNo: 0,
-      );
-
-      // 3) ✅ 자동 Recall Pack 생성 (1화라도 “항상 출력” 구조 유지)
-      final recall = await AutoRecallBuilder.build(
-        projectId: newProject.id,
-        project: newProject, // episodes 비어있음(정상)
-        nextNumber: nextNumber,
-        intent: intent,
-        maxCards: 8,
-        maxFragments: 2,
-      );
-
-      // 4) ✅ PromptBuilder로 1화 프롬프트 생성
-      final prompt = PromptBuilder.build(
+      // 백엔드로 1화 소설 생성 (prompt 빌드 · 상태 저장 · 카드 추출 · 프로젝트 저장 모두 ApiService 내부에서 처리)
+      await ApiService.generateEpisode(
         project: newProject,
-        nextNumber: nextNumber,
+        number: 1,
         tone: _tone,
         userRequest: userRequest,
         scenarioInput: scenarioInput,
-        state: state,
-        intent: intent,
-        recall: recall,
-        targetChars: _lengthHint,
+        lengthHint: _lengthHint,
       );
 
-      // ✅ 여기 매우 중요:
-      // "(생성 대기) ..." 같은 문자열을 content/prompt에 절대 넣지 않는다.
-      // prompt가 만들어진 뒤에만 Episode를 만든다.
-      final ep = Episode(
-        number: nextNumber,
-        title: '${nextNumber}화',
-        content: prompt,
-        prompt: prompt,
-        createdAt: DateTime.now(),
-        userRequest: userRequest,
-        scenarioInput: scenarioInput,
-        tone: _tone,
-      );
-
-      newProject.episodes.add(ep);
-
-      // 5) 상태 업데이트 (episodeNo = 1)
-      final updated = NarrativeState.fromJson({
-        ...state.toJson(),
-        "episodeNo": nextNumber,
-      });
-      await StorageService.saveState(newProject.id, updated);
-
-      // 6) ✅ 카드 자동 축적(가이드에서 장소/인물/떡밥 추출)
-      final newCards = CardExtractor.extract(
-        scenarioInput: scenarioInput,
-        nextEpisodeNo: nextNumber,
-      );
-      for (final CardBase nc in newCards) {
-        await NarrativeDB.upsertCard(newProject.id, nc);
+      if (dialogOpen) {
+        nav.pop();
+        dialogOpen = false;
       }
-
       if (!mounted) return;
       setState(() => _loading = false);
 
-      // ✅ "새 프로젝트 생성 완료" 결과를 메인으로 반환
-      Navigator.pop(context, newProject);
+      // ✅ “새 프로젝트 생성 완료” 결과를 메인으로 반환
+      nav.pop(newProject);
     } catch (e) {
+      if (dialogOpen) {
+        nav.pop();
+        dialogOpen = false;
+      }
       if (!mounted) return;
       setState(() => _loading = false);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('생성 실패: $e')),
+        SnackBar(
+          content: Text('생성 실패: $e'),
+          duration: const Duration(seconds: 8),
+          action: SnackBarAction(label: '닫기', onPressed: () {}),
+        ),
       );
     }
   }

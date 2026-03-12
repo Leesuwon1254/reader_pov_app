@@ -67,7 +67,7 @@ class _AdPopupContentState extends State<AdPopupContent> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: cs.outline.withOpacity(0.15),
+                color: cs.outline.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -82,14 +82,14 @@ class _AdPopupContentState extends State<AdPopupContent> {
           Container(
             height: 90,
             decoration: BoxDecoration(
-              color: cs.primary.withOpacity(0.07),
+              color: cs.primary.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Center(
               child: Icon(
                 Icons.image_outlined,
                 size: 36,
-                color: cs.primary.withOpacity(0.35),
+                color: cs.primary.withValues(alpha: 0.35),
               ),
             ),
           ),
@@ -116,7 +116,7 @@ class _AdPopupContentState extends State<AdPopupContent> {
             '광고 배너 (추후 AdMob 연결 예정)',
             style: TextStyle(
               fontSize: 10,
-              color: cs.onSurfaceVariant.withOpacity(0.45),
+              color: cs.onSurfaceVariant.withValues(alpha: 0.45),
             ),
           ),
         ],

@@ -32,7 +32,7 @@ class GenreSelectScreen extends StatelessWidget {
                 );
 
                 // ✅ TemplateSelectScreen에서 StoryProject를 받으면 메인으로 전달
-                if (result is StoryProject) {
+                if (result is StoryProject && context.mounted) {
                   Navigator.pop(context, result);
                 }
               },

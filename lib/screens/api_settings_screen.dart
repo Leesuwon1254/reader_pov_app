@@ -19,7 +19,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   }
 
   Future<void> _load() async {
-    final v = await ApiConfig.getBaseUrl();
+    await ApiConfig.getBaseUrl();
     _ctrl.text = 'http://127.0.0.1:8001';
     if (mounted) setState(() => _loading = false);
   }
