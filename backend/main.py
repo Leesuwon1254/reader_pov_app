@@ -422,17 +422,20 @@ def _call_openai_continuation(
     원본 프롬프트 + 지금까지의 본문 + 이어쓰기 지시를 단일 system 메시지로 구성해
     모델이 '완결된 이야기'로 인식하는 것을 방지한다.
     """
-    # 직전 맥락은 마지막 600자만 사용
-    tail = current_text[-600:] if len(current_text) > 600 else current_text
+    # 직전 맥락은 마지막 300자만 사용 (토큰 절약 + 집중도 향상)
+    tail = current_text[-300:] if len(current_text) > 300 else current_text
 
-    # base_prompt 전체 재전송 제거 → 핵심 3줄 요약만 전송 (입력 토큰 대폭 감소)
+    # 핵심 5줄 지시만 전송 (base_prompt 전체 제거)
     continuation_prompt = (
         f"[이어쓰기 지시] 한국어 웹소설 본문을 아래 규칙으로 계속 작성하라.\n"
         f"- 무인칭 몰입 POV. 서술에 2인칭(너/네/너의/너에게/너는) 절대 사용 금지.\n"
-        f"- 반드시 {remaining_chars}자 이상 작성할 것. 마무리/결말 금지, 계속 전개하라.\n\n"
-        f"[직전 본문 끝부분]\n"
+        f"- 반드시 {remaining_chars}자 이상 새로 작성할 것. 분량 미달 시 장면을 추가하라.\n"
+        f"- 마무리/결말/에필로그 금지. 이야기를 계속 전개하라.\n"
+        f"- 직전 본문을 요약하거나 반복하지 말고, 바로 이어서 써라.\n"
+        f"- 장면은 행동·대화·감각 묘사 중심으로 전개하라.\n\n"
+        f"[직전 본문 끝부분 (이 다음부터 이어서 쓸 것)]\n"
         f"{tail}\n\n"
-        f"[이어서 작성 시작]"
+        f"[이어서 작성 시작 →]"
     )
     resp = client.chat.completions.create(
         model=model,
@@ -451,7 +454,7 @@ def _generate_with_continuation(
     model: str,
     base_prompt: str,
     target_chars: int,
-    max_continuations: int = 2,
+    max_continuations: int = 3,
     max_guard_attempts: int = 3,
 ) -> Tuple[str, int, bool, bool, Optional[str], str]:
     """
@@ -464,7 +467,7 @@ def _generate_with_continuation(
     import time as _time
     t_total = _time.perf_counter()
 
-    threshold = int(target_chars * 0.8)
+    threshold = target_chars          # 목표 분량 자체를 기준으로 (0.8 완화 제거)
     parts: List[str] = []
     did_any_safe_fix = False
     continuation_count = 0
@@ -620,7 +623,7 @@ def generate(req: FlutterGenerateRequest):
                 model=model,
                 base_prompt=final_prompt,
                 target_chars=target_length,
-                max_continuations=2,
+                max_continuations=3,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"OpenAI request failed: {e}")
