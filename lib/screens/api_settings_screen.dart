@@ -20,7 +20,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
   Future<void> _load() async {
     await ApiConfig.getBaseUrl();
-    _ctrl.text = 'http://127.0.0.1:8001';
+    _ctrl.text = 'https://reader-pov-app.onrender.com';
     if (mounted) setState(() => _loading = false);
   }
 
@@ -39,7 +39,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final v = _ctrl.text.trim();
     if (!_isValidUrl(v)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('올바른 URL 형식이 아닙니다. 예: http://192.168.219.55:8001')),
+        const SnackBar(content: Text('올바른 URL 형식이 아닙니다. 예: https://reader-pov-app.onrender.com')),
       );
       return;
     }
@@ -76,7 +76,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                     controller: _ctrl,
                     decoration: const InputDecoration(
                       labelText: 'API Base URL',
-                      hintText: 'http://127.0.0.1:8001',
+                      hintText: 'https://reader-pov-app.onrender.com',
                       border: OutlineInputBorder(),
                     ),
                   ),
