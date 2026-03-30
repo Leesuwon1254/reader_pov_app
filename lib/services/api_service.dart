@@ -196,6 +196,88 @@ class ApiService {
     return text;
   }
 
+  // ============================================================
+  // SSE 스트리밍 내부 헬퍼 (/generate/stream)
+  // - Render 30초 타임아웃 우회: 연결 유지하며 청크 수신
+  // - onChunk: 실시간 텍스트 표시용 콜백 (선택)
+  // ============================================================
+  static Future<String> _generateWithStream({
+    required String baseUrl,
+    required Map<String, dynamic> payload,
+    void Function(String chunk)? onChunk,
+  }) async {
+    final uri = Uri.parse('$baseUrl/generate/stream');
+    final request = http.Request('POST', uri)
+      ..headers['Content-Type'] = 'application/json'
+      ..headers['Accept'] = 'text/event-stream'
+      ..body = jsonEncode(payload);
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .send(request)
+          .timeout(const Duration(seconds: 360));
+
+      if (response.statusCode != 200) {
+        final body = await response.stream.bytesToString();
+        throw 'HTTP ${response.statusCode}: $body';
+      }
+
+      final buffer = StringBuffer();
+      var sseBuffer = '';
+
+      await for (final rawChunk in response.stream.transform(utf8.decoder)) {
+        sseBuffer += rawChunk;
+
+        // SSE 메시지는 \n\n 으로 구분
+        while (sseBuffer.contains('\n\n')) {
+          final idx = sseBuffer.indexOf('\n\n');
+          final message = sseBuffer.substring(0, idx);
+          sseBuffer = sseBuffer.substring(idx + 2);
+
+          for (final line in message.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            final jsonStr = line.substring(6);
+            try {
+              final event = jsonDecode(jsonStr) as Map<String, dynamic>;
+              final type = (event['type'] as String?) ?? '';
+
+              if (type == 'chunk') {
+                final text = (event['text'] as String?) ?? '';
+                if (text.isNotEmpty) {
+                  buffer.write(text);
+                  onChunk?.call(text);
+                }
+              } else if (type == 'guard_retry') {
+                // 금지어 위반 → 백엔드가 재생성, 버퍼 초기화
+                buffer.clear();
+                debugPrint('[ApiService] Guard retry ${event['attempt']}: ${event['reason']}');
+              } else if (type == 'continuation') {
+                debugPrint('[ApiService] Continuation ${event['index']}: '
+                    '${event['current_chars']}/${event['target_chars']}자');
+              } else if (type == 'done') {
+                final meta = event['meta'] as Map<String, dynamic>?;
+                debugPrint('[ApiService] Stream done: ${meta?['total_chars']}자 '
+                    'guard_ok=${meta?['guard_ok']}');
+              } else if (type == 'error') {
+                throw (event['message'] as String?) ?? '알 수 없는 스트리밍 오류';
+              }
+            } catch (e) {
+              if (e is String) rethrow;
+              debugPrint('[ApiService] SSE 파싱 오류: $e');
+            }
+          }
+        }
+      }
+
+      final result = buffer.toString();
+      if (result.trim().isEmpty) throw '스트리밍 응답이 비어있음';
+      return result;
+    } finally {
+      client.close();
+    }
+  }
+
   static Future<Episode> generateEpisode({
     required StoryProject project,
     required int number,
@@ -277,7 +359,6 @@ $userRequest
 ''';
 
     final resolvedUrl = await _resolvedBaseUrl();
-    final uri = Uri.parse('$resolvedUrl/generate');
 
     debugPrint('[ApiService] generateEpisode 진입: '
         'projectId=${project.id} number=$number '
@@ -285,110 +366,45 @@ $userRequest
     debugPrint('[ApiService]  tone=${tone.apiKey} lengthHint=$lengthHint');
     debugPrint('[ApiService]  userRequest="${userRequest.length > 80 ? userRequest.substring(0, 80) : userRequest}"');
     debugPrint('[ApiService]  scenarioInput="${scenarioInput.length > 80 ? scenarioInput.substring(0, 80) : scenarioInput}"');
-    debugPrint('[ApiService]  endpoint=$uri');
+    debugPrint('[ApiService]  endpoint=$resolvedUrl/generate/stream');
 
-    const int maxAttempts = 3;
-    String lastTitle = '${number}화';
+    final String lastTitle = '${number}화';
     String lastContent = '';
-    String usedPromptForThisEpisode = basePrompt;
+    final String usedPromptForThisEpisode = basePrompt;
 
-    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-      String prompt = basePrompt;
+    final payload = {
+      'prompt': basePrompt,
+      'synopsis': synopsis,
+      'genre': genre,
+      'tone': tone.apiKey,
+      'length_hint': lengthHint,
+      'request': userRequest,
+      'guide': scenarioInput,
+      'option': tone.label.toString(),
+      'mode': tone.apiKey,
+    };
 
-      if (attempt > 1 && lastContent.isNotEmpty) {
-        final needNoPronounFix = _hasForbiddenInNarration(lastContent);
+    debugPrint('[ApiService]  SSE 스트리밍 시작...');
+    final streamStart = DateTime.now();
+    try {
+      lastContent = await _generateWithStream(
+        baseUrl: resolvedUrl,
+        payload: payload,
+      );
+    } catch (e) {
+      debugPrint('[ApiService]  스트리밍 오류: $e');
+      rethrow;
+    }
+    final streamMs = DateTime.now().difference(streamStart).inMilliseconds;
+    debugPrint('[ApiService]  스트리밍 완료: ${(streamMs / 1000).toStringAsFixed(1)}s | ${lastContent.length}자');
 
-        if (!needNoPronounFix) break;
+    if (lastContent.trim().isEmpty) {
+      throw '서버 응답 content가 비어있음 (백엔드 로그 확인 필요)';
+    }
 
-        debugPrint('[ApiService]  attempt=$attempt needPronounFix=$needNoPronounFix → 재시도');
-
-        prompt = [
-          basePrompt,
-          '',
-          _postFixInstruction(
-            targetChars: lengthHint,
-            needNoPronounFix: needNoPronounFix,
-            needLengthFix: false,
-          ),
-        ].join('\n');
-      }
-
-      usedPromptForThisEpisode = prompt;
-
-      final payload = {
-        'prompt': prompt,
-        'synopsis': synopsis,
-        'genre': genre,
-        'tone': tone.apiKey,
-        'length_hint': lengthHint,
-        'request': userRequest,
-        'guide': scenarioInput,
-        'option': tone.label.toString(),
-        'mode': tone.apiKey,
-      };
-
-      debugPrint('[ApiService]  HTTP POST 시도 attempt=$attempt ...');
-
-      late http.Response res;
-      final httpStart = DateTime.now();
-      try {
-        res = await http
-            .post(
-              uri,
-              headers: const {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-              },
-              body: jsonEncode(payload),
-            )
-            .timeout(const Duration(seconds: 360));
-      } catch (e) {
-        debugPrint('[ApiService]  HTTP 요청 실패: $e');
-        rethrow;
-      }
-      final httpMs = DateTime.now().difference(httpStart).inMilliseconds;
-      debugPrint('[ApiService]  HTTP 소요: ${(httpMs / 1000).toStringAsFixed(1)}s (attempt=$attempt)');
-
-      debugPrint('[ApiService]  응답 statusCode=${res.statusCode}');
-      debugPrint('[ApiService]  응답 body(앞 300자)=${res.body.length > 300 ? res.body.substring(0, 300) : res.body}');
-
-      if (res.statusCode != 200) {
-        throw 'HTTP ${res.statusCode}: ${res.body}';
-      }
-
-      late Map<String, dynamic> data;
-      try {
-        data = jsonDecode(res.body) as Map<String, dynamic>;
-      } catch (e) {
-        debugPrint('[ApiService]  JSON decode 실패: $e');
-        throw 'JSON 파싱 오류: $e\nbody=${res.body.length > 200 ? res.body.substring(0, 200) : res.body}';
-      }
-
-      debugPrint('[ApiService]  응답 필드=${data.keys.toList()}');
-
-      // 백엔드는 title 필드를 반환하지 않음 → number화로 고정
-      lastContent = (data['content'] ?? '').toString();
-
-      debugPrint('[ApiService]  content 길이=${lastContent.length} (목표=${(lengthHint * 0.9).floor()}자 이상)');
-
-      if (lastContent.trim().isEmpty) {
-        throw '서버 응답 content가 비어있음 (백엔드 로그 확인 필요)';
-      }
-
-      // OpenAI 거절 메시지 감지
-      if (_isRefusalContent(lastContent)) {
-        debugPrint('[ApiService]  OpenAI 거절 메시지 감지: "${lastContent.substring(0, lastContent.length.clamp(0, 80))}"');
-        throw 'OpenAI가 이 요청을 거절했습니다. 프롬프트 내용을 확인해주세요.\n원문: $lastContent';
-      }
-
-      final hasForbidden = _hasForbiddenInNarration(lastContent);
-
-      debugPrint('[ApiService]  hasForbidden=$hasForbidden');
-
-      if (!hasForbidden) {
-        debugPrint('[ApiService]  품질 검증 통과 (attempt=$attempt)');
-        break;
-      }
+    if (_isRefusalContent(lastContent)) {
+      debugPrint('[ApiService]  OpenAI 거절 감지: "${lastContent.substring(0, lastContent.length.clamp(0, 80))}"');
+      throw 'OpenAI가 이 요청을 거절했습니다. 프롬프트 내용을 확인해주세요.\n원문: $lastContent';
     }
 
     final nextState = NarrativeState(

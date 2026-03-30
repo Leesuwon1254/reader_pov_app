@@ -1,12 +1,14 @@
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Literal, Dict, Any, Tuple
 
 import os
 import re
+import json
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 # -------------------------------------------------------
 # 0) ENV / OpenAI Client
@@ -596,6 +598,168 @@ def _clamp_length_hint(v: Optional[int]) -> int:
 
 # -------------------------------------------------------
 # 6) Generate Endpoint
+# -------------------------------------------------------
+# -------------------------------------------------------
+# 7) Streaming Generate Endpoint (/generate/stream)
+# -------------------------------------------------------
+
+def _get_async_openai_client() -> AsyncOpenAI:
+    api_key = _get_api_key()
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not set")
+    return AsyncOpenAI(api_key=api_key, timeout=300.0)
+
+
+@app.post("/generate/stream")
+async def generate_stream(req: FlutterGenerateRequest):
+    """
+    SSE 스트리밍 엔드포인트.
+    Render 무료 플랜 30초 HTTP 타임아웃을 우회하기 위해
+    연결을 끊지 않고 청크 단위로 스트리밍.
+
+    SSE 이벤트 타입:
+      {"type":"chunk",       "text":"..."}            - OpenAI 토큰
+      {"type":"continuation","index":N, ...}          - 이어쓰기 시작
+      {"type":"guard_retry", "attempt":N,"reason":""} - 금지어 재생성
+      {"type":"done",        "meta":{...}}            - 완료
+      {"type":"error",       "message":"..."}         - 오류
+    """
+    final_prompt = _norm_text(req.prompt, "").strip()
+    target_length = _clamp_length_hint(req.length_hint)
+
+    # 프롬프트 없을 때 fallback (기존 /generate와 동일)
+    if not final_prompt:
+        synopsis_text = _norm_text(req.synopsis, "").strip()
+        options = map_flutter_to_options(req)
+        mapped = GenerateRequest(
+            project_title="승자와 패자",
+            genre_tone=f"{_norm_text(req.genre, 'drama')} / {_norm_text(req.tone, 'normal')}",
+            target_length=target_length,
+            banned_elements="없음",
+            keywords="없음",
+            character_bible="- (미정): v2에서 인물카드 연동 예정",
+            previous_summary=synopsis_text,
+            episode_goal="다음 화 작성",
+            must_include=[],
+            avoid=[],
+            user_request_text=_norm_text(
+                f"{_safe_str(req.request)}\n{_safe_str(req.guide)}".strip(),
+                "(추가 없음)",
+            ),
+            options=options,
+        )
+        final_prompt = build_prompt(mapped)["prompt_text"]
+
+    async def event_generator():
+        try:
+            client = _get_async_openai_client()
+        except ValueError as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            return
+
+        model = "gpt-4o-mini"
+        max_continuations = 3
+        max_guard_attempts = 3
+        used_prompt = final_prompt
+        merged = ""
+        reason: Optional[str] = None
+
+        for guard_attempt in range(max_guard_attempts):
+            parts: List[str] = []
+
+            # ── 1차 생성 (스트리밍) ──────────────────────────────
+            chunks: List[str] = []
+            try:
+                stream = await client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": used_prompt}],
+                    max_tokens=10000,
+                    temperature=0.85,
+                    stream=True,
+                )
+                async for token in stream:
+                    delta = (token.choices[0].delta.content or "") if token.choices else ""
+                    if delta:
+                        chunks.append(delta)
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': delta})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'OpenAI error: {e}'})}\n\n"
+                return
+
+            fixed, _ = _remove_safe_meta_lines("".join(chunks))
+            parts.append(fixed)
+
+            # ── Continuation (분량 보충) ──────────────────────────
+            cont_count = 0
+            while len("".join(parts)) < target_length and cont_count < max_continuations:
+                cont_count += 1
+                current_text = "\n\n".join(parts)
+                remaining = target_length - len(current_text)
+
+                yield f"data: {json.dumps({'type': 'continuation', 'index': cont_count, 'current_chars': len(current_text), 'target_chars': target_length})}\n\n"
+
+                tail = current_text[-300:] if len(current_text) > 300 else current_text
+                cont_prompt = (
+                    f"[이어쓰기 지시] 한국어 웹소설 본문을 아래 규칙으로 계속 작성하라.\n"
+                    f"- 무인칭 몰입 POV. 서술에 2인칭(너/네/너의/너에게/너는) 절대 사용 금지.\n"
+                    f"- 반드시 {remaining}자 이상 새로 작성할 것. 분량 미달 시 장면을 추가하라.\n"
+                    f"- 마무리/결말/에필로그 금지. 이야기를 계속 전개하라.\n"
+                    f"- 직전 본문을 요약하거나 반복하지 말고, 바로 이어서 써라.\n"
+                    f"- 장면은 행동·대화·감각 묘사 중심으로 전개하라.\n\n"
+                    f"[직전 본문 끝부분 (이 다음부터 이어서 쓸 것)]\n"
+                    f"{tail}\n\n"
+                    f"[이어서 작성 시작 →]"
+                )
+
+                cont_chunks: List[str] = []
+                try:
+                    cont_stream = await client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "system", "content": cont_prompt}],
+                        max_tokens=10000,
+                        temperature=0.85,
+                        stream=True,
+                    )
+                    async for token in cont_stream:
+                        delta = (token.choices[0].delta.content or "") if token.choices else ""
+                        if delta:
+                            cont_chunks.append(delta)
+                            yield f"data: {json.dumps({'type': 'chunk', 'text': delta})}\n\n"
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Continuation error: {e}'})}\n\n"
+                    return
+
+                cont_fixed, _ = _remove_safe_meta_lines("".join(cont_chunks))
+                parts.append(cont_fixed)
+
+            merged = "\n\n".join(parts)
+            ok, reason = _guard_validate(merged)
+
+            if ok:
+                yield f"data: {json.dumps({'type': 'done', 'meta': {'total_chars': len(merged), 'total_calls': 1 + cont_count, 'did_regenerate': guard_attempt > 0, 'guard_ok': True}})}\n\n"
+                return
+
+            # Guard 실패 → 재시도 알림 후 suffix 추가
+            if guard_attempt < max_guard_attempts - 1:
+                yield f"data: {json.dumps({'type': 'guard_retry', 'attempt': guard_attempt + 1, 'reason': reason or ''})}\n\n"
+                used_prompt = final_prompt + _guard_suffix_instruction()
+
+        # 모든 guard 시도 소진 → 마지막 결과라도 반환
+        yield f"data: {json.dumps({'type': 'done', 'meta': {'total_chars': len(merged), 'guard_ok': False, 'last_reason': reason}})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # nginx/Render 버퍼링 비활성화
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# -------------------------------------------------------
+# 6-b) 기존 동기 Generate Endpoint (하위 호환 유지)
 # -------------------------------------------------------
 @app.post("/generate", response_model=GenerateResponse)
 def generate(req: FlutterGenerateRequest):
