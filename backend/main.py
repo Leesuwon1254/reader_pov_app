@@ -60,6 +60,7 @@ class FlutterGenerateRequest(BaseModel):
     guide: Optional[str] = ""
     mode: Optional[Any] = ""
     option: Optional[Any] = ""
+    episode_number: Optional[int] = None
 
 class GenerateRequest(BaseModel):
     project_title: str
@@ -112,19 +113,24 @@ OPTION_TEXT = {
 
 DEFAULT_STYLE_LINE = "- 문체는 간결하고 몰입감 있게, 장면 전환을 빠르게 하라."
 
-MASTER_TEMPLATE = """너는 **“2인칭 독자시점(Reader POV)” 연재 소설**을 쓰는 전문 작가다.  
-사용자는 이야기의 주인공이며, 모든 서술은 **독자 체험 중심**으로 진행한다.  
+MASTER_TEMPLATE = “””너는 **”2인칭 독자시점(Reader POV)” 연재 소설**을 쓰는 전문 작가다.
+사용자는 이야기의 주인공이며, 모든 서술은 **독자 체험 중심**으로 진행한다.
 아래 정보를 바탕으로 **이번 회차(1화 분량)**를 작성하라.
 
-[HARD RULES]  
-1) 시점은 2인칭 독자시점으로 유지한다. (문장마다 '너는'을 반복할 필요는 없으며, 자연스러운 2인칭 흐름을 우선한다.)  
-2) 독자가 직접 보고·듣고·느끼고·선택한 정보만 서술한다  
-   (전지적 설명, 타인의 속마음 직접 서술 금지).  
-3) 기존 설정/인물/사건과 모순되는 전개 금지.  
-4) 설명보다 장면(행동·대화·감각 묘사) 중심으로 전개한다.  
+[HARD RULES]
+1) 시점은 2인칭 독자시점으로 유지한다. (문장마다 '너는'을 반복할 필요는 없으며, 자연스러운 2인칭 흐름을 우선한다.)
+2) 독자가 직접 보고·듣고·느끼고·선택한 정보만 서술한다
+   (전지적 설명, 타인의 속마음 직접 서술 금지).
+3) 기존 설정/인물/사건과 모순되는 전개 금지.
+4) 설명보다 장면(행동·대화·감각 묘사) 중심으로 전개한다.
 5) 과격한 묘사·성인 수위·혐오 표현은 배제하고 긴장감 중심으로 연출.
-6) 분량 목표: **{target_length}자 내외**(±15%).  
+6) 분량 목표: **{target_length}자 내외**(±15%).
 7) 결과는 반드시 [OUTPUT FORMAT]을 준수한다.
+8) 주인공과 상대 인물의 이름을 반드시 사용할 것. 이름이 없으면 소년/소녀 또는 인물A/인물B로 고정하라.
+9) 매 회차마다 반드시 하나의 구체적 사건이 발생해야 한다 (우연한 만남, 충돌, 발견, 선택 등).
+10) AI 시스템 메시지, 사과문, 안내문(“죄송합니다”, “도움이 필요하시면” 등)을 절대 본문에 포함하지 말 것.
+11) 이전 회차의 인물, 장소, 소품, 사건을 반드시 현재 회차와 연결할 것.
+12) 장르와 분위기를 회차 내내 일관되게 유지할 것.
 
 [PROJECT INFO]  
 - 작품명: {project_title}  
@@ -285,6 +291,28 @@ _FORBIDDEN_NARRATION_TOKENS: List[re.Pattern] = [
     re.compile(r"\b독자(님|분)\b"),
 ]
 
+# AI 거절/사과 문구 패턴 (서두 100자 이내에서 감지)
+_REFUSAL_PATTERNS: List[re.Pattern] = [
+    re.compile(r"죄송하지만"),
+    re.compile(r"죄송합니다"),
+    re.compile(r"죄송[해헤]"),
+    re.compile(r"할 수 없"),
+    re.compile(r"제공할 수 없"),
+    re.compile(r"작성할 수 없"),
+    re.compile(r"도움[이을]\s*(드리기|드릴)\s*어렵"),
+    re.compile(r"부적절한\s*내용"),
+    re.compile(r"안전\s*정책"),
+    re.compile(r"가이드라인에\s*(위반|반하)"),
+]
+
+def _find_refusal(text: str) -> Optional[str]:
+    """텍스트 전체에서 AI 거절 문구를 탐지한다."""
+    for pat in _REFUSAL_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return f"REFUSAL_PHRASE:{m.group(0)}"
+    return None
+
 # 줄 전체 삭제가 안전한 메타 표현(문학적 의미 판단 없이 제거 가능)
 _SAFE_DROP_LINE_PATTERNS: List[re.Pattern] = [
     re.compile(r"^\s*#\s*SUMMARY\s*:?", re.IGNORECASE),
@@ -339,7 +367,9 @@ def _find_first_forbidden_in_narration(text: str) -> Optional[str]:
     return None
 
 def _guard_validate(text: str) -> Tuple[bool, Optional[str]]:
-    reason = _find_first_forbidden_in_narration(text)
+    reason = _find_refusal(text)
+    if reason is None:
+        reason = _find_first_forbidden_in_narration(text)
     return (reason is None), reason
 
 def _guard_suffix_instruction() -> str:
@@ -631,6 +661,12 @@ async def generate_stream(req: FlutterGenerateRequest):
     if not final_prompt:
         synopsis_text = _norm_text(req.synopsis, "").strip()
         options = map_flutter_to_options(req)
+        ep_num = req.episode_number
+        ep_goal = (
+            f"제{ep_num}화: 인물의 갈등을 구체적 사건으로 전개하고 다음 화에 대한 궁금증을 남길 것"
+            if ep_num else
+            "인물의 갈등을 구체적 사건으로 전개하고 다음 화에 대한 궁금증을 남길 것"
+        )
         mapped = GenerateRequest(
             project_title="승자와 패자",
             genre_tone=f"{_norm_text(req.genre, 'drama')} / {_norm_text(req.tone, 'normal')}",
@@ -639,7 +675,7 @@ async def generate_stream(req: FlutterGenerateRequest):
             keywords="없음",
             character_bible="- (미정): v2에서 인물카드 연동 예정",
             previous_summary=synopsis_text,
-            episode_goal="다음 화 작성",
+            episode_goal=ep_goal,
             must_include=[],
             avoid=[],
             user_request_text=_norm_text(
@@ -822,6 +858,12 @@ def generate(req: FlutterGenerateRequest):
     # ---------------------------------------------------
     synopsis_text = _norm_text(req.synopsis, "").strip()
 
+    ep_num = req.episode_number
+    ep_goal = (
+        f"제{ep_num}화: 인물의 갈등을 구체적 사건으로 전개하고 다음 화에 대한 궁금증을 남길 것"
+        if ep_num else
+        "인물의 갈등을 구체적 사건으로 전개하고 다음 화에 대한 궁금증을 남길 것"
+    )
     mapped = GenerateRequest(
         project_title="승자와 패자",
         genre_tone=f"{_norm_text(req.genre, 'drama')} / {_norm_text(req.tone, 'normal')}",
@@ -830,7 +872,7 @@ def generate(req: FlutterGenerateRequest):
         keywords="없음",
         character_bible="- (미정): v2에서 인물카드 연동 예정",
         previous_summary=synopsis_text,
-        episode_goal="다음 화 작성",
+        episode_goal=ep_goal,
         must_include=[],
         avoid=[],
         user_request_text=_norm_text(
