@@ -25,6 +25,7 @@ class PromptBuilder {
   }) {
     return [
       '무인칭 몰입 POV 연재소설을 작성한다. 독자는 장면을 직접 겪는 위치에 놓이며, 한국어 소설 문체로 자연스럽게 전개한다.',
+      _characterLockBlock(project: project),
       _rulesBlock(),
       _povStyleBlock(targetChars: targetChars),
       _protagonistBlock(project: project, targetChars: targetChars),
@@ -50,6 +51,37 @@ class PromptBuilder {
       _projectSeedBlock(project),
       _outputBlock(nextNumber: nextNumber, targetChars: targetChars),
     ].where((s) => s.trim().isNotEmpty).join('\n\n');
+  }
+
+  // ------------------------------------------------------------
+  // CHARACTER LOCK (매 화 고정 지시문)
+  // ------------------------------------------------------------
+  static String _characterLockBlock({required StoryProject project}) {
+    final protagonist = project.protagonistName.trim();
+    final partner = project.partnerName.trim();
+    final relation = project.partnerRelation.trim();
+    final theme = project.coreTheme.trim();
+    final genre = project.genreLock.trim();
+
+    if (protagonist.isEmpty && partner.isEmpty && theme.isEmpty && genre.isEmpty) {
+      return '';
+    }
+
+    final partnerDesc = partner.isNotEmpty
+        ? (relation.isNotEmpty ? '$partner($relation)' : partner)
+        : '(미지정)';
+    final themeDesc = theme.isNotEmpty ? theme : '(미지정)';
+    final genreDesc = genre.isNotEmpty ? genre : '(미지정)';
+
+    return [
+      '[CHARACTER & THEME LOCK — 절대 변경 금지]',
+      '- 주인공: ${protagonist.isNotEmpty ? protagonist : "(미지정)"}',
+      '- 상대: $partnerDesc',
+      '- 테마: $themeDesc',
+      '- 장르: $genreDesc',
+      '- 위 설정(이름/관계/테마/장르)을 매 화 내내 절대 바꾸지 말 것.',
+      '- 이름이 없으면 소년/소녀 또는 인물A/인물B로 고정하고, 화마다 일관되게 유지하라.',
+    ].join('\n');
   }
 
   // ------------------------------------------------------------

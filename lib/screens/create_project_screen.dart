@@ -12,9 +12,12 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
   final _titleCtrl = TextEditingController();
   final _loglineCtrl = TextEditingController();
   final _scenarioCtrl = TextEditingController();
-
-  // ✅ NEW: 주인공 이름(필수)
   final _protagonistCtrl = TextEditingController();
+  final _partnerCtrl = TextEditingController();
+  final _themeCtrl = TextEditingController();
+  String _partnerRelation = '친구';
+
+  static const _relationOptions = ['친구', '연인', '라이벌', '동료'];
 
   @override
   void dispose() {
@@ -22,6 +25,8 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     _loglineCtrl.dispose();
     _scenarioCtrl.dispose();
     _protagonistCtrl.dispose();
+    _partnerCtrl.dispose();
+    _themeCtrl.dispose();
     super.dispose();
   }
 
@@ -30,8 +35,9 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     final logline = _loglineCtrl.text.trim();
     final scenario = _scenarioCtrl.text.trim();
     final protagonistName = _protagonistCtrl.text.trim();
+    final partnerName = _partnerCtrl.text.trim();
+    final coreTheme = _themeCtrl.text.trim();
 
-    // ✅ 제목 + 시나리오 + 주인공 이름 필수
     if (title.isEmpty || scenario.isEmpty || protagonistName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('제목 / 주인공 이름 / 시나리오(뼈대)는 필수야!')),
@@ -44,10 +50,10 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
       title: title,
       logline: logline.isEmpty ? '한 줄 소개 없음' : logline,
       baseScenario: scenario,
-
-      // ✅ NEW
       protagonistName: protagonistName,
-
+      partnerName: partnerName,
+      partnerRelation: partnerName.isNotEmpty ? _partnerRelation : '',
+      coreTheme: coreTheme,
       episodes: [],
     );
 
@@ -71,12 +77,47 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
           ),
           const SizedBox(height: 12),
 
-          // ✅ NEW: 주인공 이름 입력 (필수)
           TextField(
             controller: _protagonistCtrl,
             decoration: const InputDecoration(
               labelText: '주인공 이름(필수)',
               hintText: '예) 김태윤',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 상대 인물 이름
+          TextField(
+            controller: _partnerCtrl,
+            decoration: const InputDecoration(
+              labelText: '상대 인물 이름(선택)',
+              hintText: '예) 이서준',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 관계 선택
+          DropdownButtonFormField<String>(
+            value: _partnerRelation,
+            decoration: const InputDecoration(
+              labelText: '상대 인물과의 관계',
+              border: OutlineInputBorder(),
+            ),
+            items: _relationOptions
+                .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                .toList(),
+            onChanged: (v) => setState(() => _partnerRelation = v ?? '친구'),
+          ),
+          const SizedBox(height: 12),
+
+          // 핵심 테마
+          TextField(
+            controller: _themeCtrl,
+            decoration: const InputDecoration(
+              labelText: '핵심 테마(선택)',
+              hintText: '이 소설의 핵심 주제 (예: 승자와 패자, 성장)',
               border: OutlineInputBorder(),
             ),
           ),

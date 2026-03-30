@@ -382,6 +382,7 @@ $userRequest
       'guide': scenarioInput,
       'option': tone.label.toString(),
       'mode': tone.apiKey,
+      'episode_number': number,
     };
 
     debugPrint('[ApiService]  SSE 스트리밍 시작...');

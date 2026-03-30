@@ -276,6 +276,18 @@ class StoryProject {
   /// 주인공 이름(필수)
   String protagonistName;
 
+  /// 상대 인물 이름 (선택)
+  String partnerName;
+
+  /// 주인공과 상대 인물의 관계 (선택: 친구/연인/라이벌/동료)
+  String partnerRelation;
+
+  /// 핵심 테마 (선택: 예- "승자와 패자, 성장")
+  String coreTheme;
+
+  /// 장르 고정값 (선택: drama/romance/thriller/fantasy/slice)
+  String genreLock;
+
   final List<Episode> episodes;
 
   StoryProject({
@@ -284,6 +296,10 @@ class StoryProject {
     required this.logline,
     required this.baseScenario,
     required this.protagonistName,
+    this.partnerName = '',
+    this.partnerRelation = '',
+    this.coreTheme = '',
+    this.genreLock = '',
     required this.episodes,
   });
 
@@ -293,6 +309,10 @@ class StoryProject {
         'logline': logline,
         'baseScenario': baseScenario,
         'protagonistName': protagonistName,
+        'partnerName': partnerName,
+        'partnerRelation': partnerRelation,
+        'coreTheme': coreTheme,
+        'genreLock': genreLock,
         'episodes': episodes.map((e) => e.toJson()).toList(),
       };
 
@@ -367,6 +387,10 @@ class StoryProject {
       logline: (json['logline'] ?? '').toString(),
       baseScenario: (json['baseScenario'] ?? '').toString(),
       protagonistName: protagonist,
+      partnerName: (json['partnerName'] ?? '').toString(),
+      partnerRelation: (json['partnerRelation'] ?? '').toString(),
+      coreTheme: (json['coreTheme'] ?? '').toString(),
+      genreLock: (json['genreLock'] ?? '').toString(),
       episodes: eps,
     );
   }

@@ -24,24 +24,38 @@ class _GeneratingDialogState extends State<GeneratingDialog> {
   ];
 
   int _stepIndex = 0;
-  Timer? _timer;
+  int _elapsedSeconds = 0;
+  Timer? _stepTimer;
+  Timer? _elapsedTimer;
 
   @override
   void initState() {
     super.initState();
     // 30초마다 다음 단계로 전환 (마지막 단계에서 멈춤)
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _stepTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) return;
       if (_stepIndex < _steps.length - 1) {
         setState(() => _stepIndex++);
       }
     });
+    // 1초마다 경과 시간 카운트업
+    _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _elapsedSeconds++);
+    });
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _stepTimer?.cancel();
+    _elapsedTimer?.cancel();
     super.dispose();
+  }
+
+  String get _elapsedLabel {
+    final m = _elapsedSeconds ~/ 60;
+    final s = _elapsedSeconds % 60;
+    return m > 0 ? '$m분 $s초' : '$s초';
   }
 
   @override
@@ -94,6 +108,21 @@ class _GeneratingDialogState extends State<GeneratingDialog> {
             Text(
               '잠시만 기다려 주세요',
               style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '경과 시간: $_elapsedLabel',
+                  style: TextStyle(fontSize: 12, color: cs.primary, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '예상 소요: 1~2분',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
 
