@@ -54,7 +54,10 @@ TARGET = 5000
 MIN_CHARS = 4500
 MAX_FORBIDDEN = 2
 MAX_REGEN = 2
-LOG_PATH = os.path.join(os.path.dirname(__file__), "improvement_log.txt")
+
+# 절대 경로 고정 (상대경로 버그 방지)
+_BASE_DIR = r"C:\Users\USER\Desktop\reader_pov_app_v2.8_ing\backend"
+LOG_PATH = os.path.join(_BASE_DIR, "improvement_log.txt")
 
 # ──────────────────────────────────────────────────────────
 # 프롬프트 빌더
@@ -196,24 +199,19 @@ def quality_check(text: str) -> dict:
 # 로그 유틸
 # ──────────────────────────────────────────────────────────
 def log_append(line: str):
+    """로그 파일에 즉시 기록 + 콘솔 출력"""
     with open(LOG_PATH, "a", encoding="utf-8") as f:
         f.write(line + "\n")
     print(line, flush=True)
 
 
 def already_done(topic_n: int) -> bool:
-    """improvement_log.txt에서 해당 주제가 이미 완료됐는지 확인"""
+    """=== 완료: 주제 N/25 === 마커가 있으면 완료로 간주"""
     if not os.path.exists(LOG_PATH):
         return False
     with open(LOG_PATH, "r", encoding="utf-8") as f:
         content = f.read()
-    marker = f"[주제 {topic_n}/25]"
-    if marker not in content:
-        return False
-    # 해당 주제 블록 뒤에 "완전통과" 또는 "부분통과"가 있으면 완료
-    idx = content.rfind(marker)
-    block = content[idx:idx+800]
-    return ("완전통과" in block or "부분통과" in block)
+    return f"=== 완료: 주제 {topic_n}/25 ===" in content
 
 
 # ──────────────────────────────────────────────────────────
@@ -265,7 +263,9 @@ def run_loop():
             total_pass += 1
             continue
 
-        log_append(f"\n[주제 {n}/25] {t['title']} ({t['genre']})")
+        # ── 시작 마커: 재시작 시 중복 체크용 ──
+        log_append(f"\n=== 시작: 주제 {n}/25 === {time.strftime('%H:%M:%S')}")
+        log_append(f"[주제 {n}/25] {t['title']} ({t['genre']})")
         log_append(f"로그라인: {t['logline']}")
 
         ep_texts = []
@@ -336,6 +336,7 @@ def run_loop():
                 f"  수정 횟수: {total_regen}회 | 최종: {final_status}"
             )
             log_append("  ---")
+            log_append(f"=== 완료: 주제 {n}/25 === {time.strftime('%H:%M:%S')}")
 
         except Exception as e:
             err_msg = traceback.format_exc()
@@ -343,6 +344,7 @@ def run_loop():
             log_append(f"  {err_msg[:300]}")
             log_append(f"  수정 횟수: {total_regen}회 | 최종: 오류")
             log_append("  ---")
+            log_append(f"=== 완료: 주제 {n}/25 === {time.strftime('%H:%M:%S')} [오류로 건너뜀]")
 
     # ── 최종 요약 ──
     log_append("\n" + "=" * 60)

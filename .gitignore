@@ -47,3 +47,9 @@ app.*.map.json
 backend/.venv/
 backend/__pycache__/
 backend/*.pyc
+backend/.env
+
+# Backend runtime logs & test outputs
+backend/improvement_log.txt
+backend/loop_stdout.txt
+backend/test_continuation_result.txt
