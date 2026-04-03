@@ -16,6 +16,7 @@ class ProjectDetailScreen extends StatefulWidget {
 
 class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   StoryProject get project => widget.project;
+  bool _creating = false;
 
   void _openEpisode(Episode ep) {
     Navigator.push(
@@ -30,6 +31,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   }
 
   void _createNextEpisode() {
+    // 연타/더블탭 방지 guard
+    if (_creating) {
+      debugPrint('[ProjectDetailScreen] _createNextEpisode 중복 진입 차단 (_creating=true)');
+      return;
+    }
+    setState(() => _creating = true);
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -52,6 +60,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         await StorageService.save();
         _openEpisode(created);
       }
+    }).whenComplete(() {
+      if (mounted) setState(() => _creating = false);
     });
   }
 
@@ -64,9 +74,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         title: Text(project.title),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createNextEpisode,
-        icon: const Icon(Icons.auto_awesome),
-        label: const Text('다음화 만들기'),
+        onPressed: _creating ? null : _createNextEpisode,
+        icon: _creating
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+            : const Icon(Icons.auto_awesome),
+        label: Text(_creating ? '이동 중...' : '다음화 만들기'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

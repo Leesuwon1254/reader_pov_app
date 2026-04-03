@@ -10,6 +10,7 @@ import 'genre_select_screen.dart';
 // ✅ API 설정 화면
 import 'api_settings_screen.dart';
 import '../services/api_config.dart';
+import '../widgets/version_note_dialog.dart';
 
 class ProjectListScreen extends StatefulWidget {
   const ProjectListScreen({super.key});
@@ -35,6 +36,10 @@ class _ProjectListScreenState extends State<ProjectListScreen> {
     await _loadApiBaseUrl();
     if (!mounted) return;
     setState(() => _loading = false);
+    // 버전 노트 팝업: 빌드 프레임 완료 후 표시
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) showVersionNoteIfNeeded(context);
+    });
   }
 
   Future<void> _loadApiBaseUrl() async {

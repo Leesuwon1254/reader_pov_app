@@ -3,7 +3,7 @@ description: "A new Flutter project."
 
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 2.8.1+1
 
 environment:
   sdk: ^3.10.7
@@ -17,6 +17,9 @@ dependencies:
 
   # ✅ 로컬 저장(영구 저장)
   shared_preferences: ^2.2.3
+
+  # ✅ 앱 버전 정보 읽기
+  package_info_plus: ^8.0.0
 
 dev_dependencies:
   flutter_test:
