@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../services/server_warmup_service.dart';
 import '../widgets/generating_dialog.dart';
 
 class GenerateEpisodeScreen extends StatefulWidget {
@@ -18,6 +19,7 @@ class _GenerateEpisodeScreenState extends State<GenerateEpisodeScreen> {
 
   Tone _tone = Tone.normal;
   bool _isGenerating = false;
+  bool _isWaitingServer = false;
 
   // ── 광고 스킵 버튼 노출 여부 ──────────────────────────────
   // true: 오른쪽 상단에 X 버튼 표시 (생성 취소 불가, UI만 존재)
@@ -55,9 +57,19 @@ class _GenerateEpisodeScreenState extends State<GenerateEpisodeScreen> {
 
   Future<void> _generate() async {
     // 연타/중복 호출 방지 guard
-    if (_isGenerating) {
-      debugPrint('[GenerateEpisodeScreen] onPressed 중복 진입 차단 (isGenerating=true)');
+    if (_isGenerating || _isWaitingServer) {
+      debugPrint('[GenerateEpisodeScreen] onPressed 중복 진입 차단');
       return;
+    }
+
+    // 서버가 아직 웜업 중이면 대기
+    if (!ServerWarmupService.instance.isReady) {
+      debugPrint('[GenerateEpisodeScreen] 서버 웜업 대기 중...');
+      setState(() => _isWaitingServer = true);
+      await ServerWarmupService.instance.readyFuture;
+      if (!mounted) return;
+      setState(() => _isWaitingServer = false);
+      debugPrint('[GenerateEpisodeScreen] 서버 준비 완료, 생성 시작');
     }
 
     final ts = DateTime.now().toIso8601String();
@@ -162,15 +174,21 @@ class _GenerateEpisodeScreenState extends State<GenerateEpisodeScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _isGenerating ? null : _generate,
-            icon: _isGenerating
+            onPressed: (_isGenerating || _isWaitingServer) ? null : _generate,
+            icon: (_isGenerating || _isWaitingServer)
                 ? const SizedBox(
                     width: 18,
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.auto_awesome),
-            label: Text(_isGenerating ? '생성 중...' : '생성하기'),
+            label: Text(
+              _isWaitingServer
+                  ? '서버 준비 중...'
+                  : _isGenerating
+                      ? '생성 중...'
+                      : '생성하기',
+            ),
           ),
         ],
       ),

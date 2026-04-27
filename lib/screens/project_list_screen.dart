@@ -10,6 +10,7 @@ import 'genre_select_screen.dart';
 // ✅ API 설정 화면
 import 'api_settings_screen.dart';
 import '../services/api_config.dart';
+import '../services/server_warmup_service.dart';
 import '../widgets/version_note_dialog.dart';
 
 class ProjectListScreen extends StatefulWidget {
@@ -147,6 +148,41 @@ class _ProjectListScreenState extends State<ProjectListScreen> {
       appBar: AppBar(
         title: const Text('Reader POV'),
         actions: [
+          // 서버 상태 인디케이터
+          ValueListenableBuilder<ServerStatus>(
+            valueListenable: ServerWarmupService.instance.statusNotifier,
+            builder: (context, status, _) {
+              if (status == ServerStatus.ready) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4),
+                  child: Tooltip(
+                    message: '서버 준비 완료',
+                    child: Icon(Icons.circle, color: Colors.green, size: 10),
+                  ),
+                );
+              } else if (status == ServerStatus.failed) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4),
+                  child: Tooltip(
+                    message: '서버 연결 실패',
+                    child: Icon(Icons.circle, color: Colors.grey, size: 10),
+                  ),
+                );
+              } else {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4),
+                  child: Tooltip(
+                    message: '서버 준비 중...',
+                    child: SizedBox(
+                      width: 10,
+                      height: 10,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
           // ✅ API 설정(⚙️)
           IconButton(
             onPressed: _openApiSettings,
