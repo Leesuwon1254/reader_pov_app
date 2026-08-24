@@ -1,6 +1,8 @@
 // lib/services/api_service.dart
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -22,19 +24,32 @@ enum ApiMode { promptOnly, openAI }
 class ApiService {
   static const ApiMode mode = ApiMode.promptOnly;
 
-  static const String _localBaseUrl = 'https://reader-pov-app.onrender.com';
-  static const String _lanBaseUrl = 'http://192.168.219.94:8000';
-  static const bool useLan = false;
+  static const String _defaultBaseUrl = 'https://reader-pov-app.onrender.com';
 
-  static String get baseUrl => useLan ? _lanBaseUrl : _localBaseUrl;
+  static String get baseUrl => _defaultBaseUrl;
 
   static Future<String> _resolvedBaseUrl() async {
-    // useLan=true일 때만 저장된 URL 사용; 로컬 모드에서는 _localBaseUrl 고정
-    if (useLan) {
-      final saved = await ApiConfig.getBaseUrl();
-      if (saved != null && saved.isNotEmpty) return saved;
-    }
+    final saved = await ApiConfig.getBaseUrl();
+    if (saved != null && saved.isNotEmpty) return saved;
     return baseUrl;
+  }
+
+  /// HTTP 요청 예외를 사용자 친화적 메시지로 변환
+  static String _friendlyError(Object e) {
+    if (e is TimeoutException) {
+      return '서버 응답 시간이 초과됐어요. 잠시 후 다시 시도해주세요.';
+    }
+    if (e is SocketException) {
+      return '인터넷 연결을 확인해주세요.';
+    }
+    final msg = e.toString();
+    if (msg.startsWith('HTTP 5')) {
+      return '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    }
+    if (msg.startsWith('HTTP 4')) {
+      return '요청 오류가 발생했습니다. 입력 내용을 확인해주세요.';
+    }
+    return '오류가 발생했습니다. 잠시 후 다시 시도해주세요.\n($msg)';
   }
 
   static const List<String> _forbiddenNarrationTokens = [
@@ -220,7 +235,7 @@ class ApiService {
 
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();
-        throw 'HTTP ${response.statusCode}: $body';
+        throw _friendlyError('HTTP ${response.statusCode}: $body');
       }
 
       final buffer = StringBuffer();
@@ -394,7 +409,7 @@ $userRequest
       );
     } catch (e) {
       debugPrint('[ApiService]  스트리밍 오류: $e');
-      rethrow;
+      throw _friendlyError(e);
     }
     final streamMs = DateTime.now().difference(streamStart).inMilliseconds;
     debugPrint('[ApiService]  스트리밍 완료: ${(streamMs / 1000).toStringAsFixed(1)}s | ${lastContent.length}자');

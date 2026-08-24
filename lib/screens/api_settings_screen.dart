@@ -19,8 +19,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   }
 
   Future<void> _load() async {
-    await ApiConfig.getBaseUrl();
-    _ctrl.text = 'https://reader-pov-app.onrender.com';
+    final v = await ApiConfig.getBaseUrl();
+    _ctrl.text = v ?? 'https://reader-pov-app.onrender.com';
     if (mounted) setState(() => _loading = false);
   }
 
